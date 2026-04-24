@@ -176,7 +176,8 @@ h1 {
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
+  overflow: visible;
+  position: relative;
 }
 .slot.drop-focus {
   border-color: rgba(83, 216, 251, 0.56);
@@ -196,18 +197,24 @@ h1 {
   background: radial-gradient(circle at 32% 28%, #b8c4d0, #8ea3b7 58%, #6f8399);
 }
 .disc.new {
-  animation: dropPop 0.48s cubic-bezier(0.25, 0.84, 0.3, 1.28) forwards;
+  will-change: transform, opacity;
+  z-index: 3;
+  animation: dropPop 0.62s cubic-bezier(0.2, 0.75, 0.22, 1.08) forwards;
 }
 @keyframes dropPop {
   0% {
-    opacity: 0.35;
-    transform: translateY(calc(-1 * var(--drop-distance, 80px))) scale(0.72);
+    opacity: 0.2;
+    transform: translateY(calc(-1 * var(--drop-distance, 120px))) scale(0.92);
   }
   72% {
     opacity: 1;
-    transform: translateY(0) scale(1.08);
+    transform: translateY(0) scale(1);
+  }
+  86% {
+    transform: translateY(-5px) scale(1);
   }
   100% {
+    opacity: 1;
     transform: translateY(0) scale(1);
   }
 }
@@ -1430,6 +1437,271 @@ let stage1LockHintShown = false;
 let preStartAction = null;
 let preHintShownRound1 = false;
 let preHintShownRound2 = false;
+let audioCtx = null;
+let dropSoundPreset = 'spring';
+const SOUND_VOLUME = 11.0;
+const SOUND_LEN_SCALE = 2.0;
+const sfx = n => n * SOUND_LEN_SCALE;
+let lastSetupSlideSfxAt = 0;
+let lastSetupSlideSfxGames = -1;
+
+function getAudioCtx() {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  if (!audioCtx) audioCtx = new Ctx();
+  return audioCtx;
+}
+
+function runWithAudio(playFn) {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  const run = () => {
+    if (ctx.state !== 'running') return;
+    playFn(ctx, Math.max(ctx.currentTime, 0));
+  };
+  if (ctx.state === 'running') {
+    run();
+    return;
+  }
+  ctx.resume().then(run).catch(() => {});
+}
+
+function primeAudio() {
+  runWithAudio(() => {});
+}
+
+function playTone(ctx, startAt, {
+  freq = 440,
+  wave = 'sine',
+  duration = 0.12,
+  gain = 0.05,
+  attack = 0.01,
+  release = 0.08,
+  glideTo = null
+} = {}) {
+  const osc = ctx.createOscillator();
+  const amp = ctx.createGain();
+  const loudGain = Math.min(0.9, gain * SOUND_VOLUME);
+  osc.type = wave;
+  osc.frequency.setValueAtTime(freq, startAt);
+  if (typeof glideTo === 'number') {
+    osc.frequency.exponentialRampToValueAtTime(Math.max(24, glideTo), startAt + duration);
+  }
+  amp.gain.setValueAtTime(0.0001, startAt);
+  amp.gain.linearRampToValueAtTime(loudGain, startAt + attack);
+  amp.gain.exponentialRampToValueAtTime(0.0001, startAt + Math.max(duration, attack + 0.01) + release);
+  osc.connect(amp);
+  amp.connect(ctx.destination);
+  osc.start(startAt);
+  osc.stop(startAt + Math.max(duration, attack + 0.01) + release + 0.02);
+}
+
+function playDropSound(sym = 'P', presetKey = dropSoundPreset) {
+  runWithAudio((ctx, t) => {
+    const key = String(presetKey || 'spring');
+    if (key === 'glass') {
+      const base = sym === 'P' ? 760 : 700;
+      playTone(ctx, t, {
+        freq: base,
+        wave: 'sine',
+        duration: sfx(0.05),
+        gain: 0.04,
+        attack: 0.003,
+        release: sfx(0.06)
+      });
+      playTone(ctx, t + sfx(0.03), {
+        freq: base * 1.33,
+        wave: 'triangle',
+        duration: sfx(0.05),
+        gain: 0.028,
+        attack: 0.003,
+        release: sfx(0.06)
+      });
+      return;
+    }
+    if (key === 'retro') {
+      const base = sym === 'P' ? 300 : 260;
+      playTone(ctx, t, {
+        freq: base,
+        wave: 'square',
+        duration: sfx(0.07),
+        gain: 0.045,
+        attack: 0.003,
+        release: sfx(0.05)
+      });
+      playTone(ctx, t + sfx(0.05), {
+        freq: base * 0.78,
+        wave: 'square',
+        duration: sfx(0.07),
+        gain: 0.036,
+        attack: 0.003,
+        release: sfx(0.06)
+      });
+      return;
+    }
+    if (key === 'spring') {
+      const base = sym === 'P' ? 620 : 560;
+      playTone(ctx, t, {
+        freq: base,
+        wave: 'triangle',
+        duration: sfx(0.05),
+        gain: 0.042,
+        attack: 0.003,
+        release: sfx(0.05)
+      });
+      playTone(ctx, t + sfx(0.045), {
+        freq: base * 1.2,
+        wave: 'sine',
+        duration: sfx(0.04),
+        gain: 0.03,
+        attack: 0.003,
+        release: sfx(0.05)
+      });
+      playTone(ctx, t + sfx(0.085), {
+        freq: base * 0.82,
+        wave: 'triangle',
+        duration: sfx(0.05),
+        gain: 0.028,
+        attack: 0.003,
+        release: sfx(0.06)
+      });
+      return;
+    }
+    const base = sym === 'P' ? 500 : 430;
+    playTone(ctx, t, {
+      freq: base,
+      wave: 'triangle',
+      duration: sfx(0.09),
+      gain: 0.05,
+      attack: 0.005,
+      release: sfx(0.08),
+      glideTo: base * 0.58
+    });
+  });
+}
+
+function playWinSound() {
+  runWithAudio((ctx, t) => {
+    const seq = [523.25, 659.25, 783.99, 880.0, 1046.5];
+    seq.forEach((f, i) => {
+      const at = t + i * 0.18;
+      playTone(ctx, at, {
+        freq: f,
+        wave: 'triangle',
+        duration: sfx(0.34),
+        gain: 0.056,
+        attack: 0.008,
+        release: sfx(0.24),
+        glideTo: f * 1.02
+      });
+      playTone(ctx, at + sfx(0.03), {
+        freq: f * 2,
+        wave: 'sine',
+        duration: sfx(0.32),
+        gain: 0.015,
+        attack: 0.01,
+        release: sfx(0.2)
+      });
+    });
+    playTone(ctx, t + sfx(0.9), {
+      freq: 1318.51,
+      wave: 'sine',
+      duration: sfx(0.42),
+      gain: 0.017,
+      attack: 0.01,
+      release: sfx(0.3)
+    });
+  });
+}
+
+function playLoseSound() {
+  runWithAudio((ctx, t) => {
+    const seq = [392.0, 349.23, 311.13, 277.18, 261.63];
+    seq.forEach((f, i) => {
+      const at = t + i * 0.2;
+      playTone(ctx, at, {
+        freq: f,
+        wave: 'sawtooth',
+        duration: sfx(0.36),
+        gain: 0.05,
+        attack: 0.008,
+        release: sfx(0.28),
+        glideTo: f * 0.88
+      });
+      playTone(ctx, at + sfx(0.04), {
+        freq: f * 0.5,
+        wave: 'sine',
+        duration: sfx(0.38),
+        gain: 0.018,
+        attack: 0.01,
+        release: sfx(0.28)
+      });
+    });
+    playTone(ctx, t + sfx(1.12), {
+      freq: 196.0,
+      wave: 'triangle',
+      duration: sfx(0.5),
+      gain: 0.016,
+      attack: 0.01,
+      release: sfx(0.42)
+    });
+  });
+}
+
+function playDrawSound() {
+  runWithAudio((ctx, t) => {
+    const seq = [392.0, 440.0, 493.88, 440.0, 392.0, 349.23];
+    seq.forEach((f, i) => {
+      const at = t + i * 0.16;
+      playTone(ctx, at, {
+        freq: f,
+        wave: 'sine',
+        duration: sfx(0.3),
+        gain: 0.05,
+        attack: 0.008,
+        release: sfx(0.22),
+        glideTo: f * 1.01
+      });
+      playTone(ctx, at + sfx(0.03), {
+        freq: f * 0.75,
+        wave: 'triangle',
+        duration: sfx(0.3),
+        gain: 0.015,
+        attack: 0.008,
+        release: sfx(0.2)
+      });
+    });
+    playTone(ctx, t + sfx(1.0), {
+      freq: 329.63,
+      wave: 'sine',
+      duration: sfx(0.45),
+      gain: 0.016,
+      attack: 0.01,
+      release: sfx(0.34)
+    });
+  });
+}
+
+function playTrainAccelSound() {
+  runWithAudio((ctx, t) => {
+    playTone(ctx, t, {
+      freq: 440,
+      wave: 'square',
+      duration: sfx(0.07),
+      gain: 0.045,
+      attack: 0.004,
+      release: sfx(0.06)
+    });
+    playTone(ctx, t + sfx(0.08), {
+      freq: 587.33,
+      wave: 'square',
+      duration: sfx(0.08),
+      gain: 0.05,
+      attack: 0.004,
+      release: sfx(0.07)
+    });
+  });
+}
 
 function createBoard() {
   return Array.from({ length: ROWS }, () => Array(COLS).fill(null));
@@ -1935,15 +2207,24 @@ function onSetupRangeInput() {
   const range = document.getElementById('setupRange');
   const setupPct = range ? Number(range.value) : 0;
   const visualPct = mapSetupPctToGlobalPct(setupPct);
-  updateSetupUI(clampSetupGames(mapVisualPercentToGames(visualPct)));
+  const games = clampSetupGames(mapVisualPercentToGames(visualPct));
+  updateSetupUI(games);
+  const now = performance.now();
+  if ((now - lastSetupSlideSfxAt >= 90) && games !== lastSetupSlideSfxGames) {
+    lastSetupSlideSfxAt = now;
+    lastSetupSlideSfxGames = games;
+    playTrainAccelSound();
+  }
 }
 
 function accelerateTraining() {
+  primeAudio();
   if (setupDraftGames >= setupAccelDisableFrom || setupDraftGames >= setupMaxGames) {
     updateSetupUI(setupDraftGames);
     return;
   }
   updateSetupUI(setupDraftGames + setupAccelStep);
+  playTrainAccelSound();
 }
 
 function showRules() {
@@ -1951,6 +2232,7 @@ function showRules() {
 }
 
 function startFirstGame() {
+  primeAudio();
   markVisited();
   document.getElementById('rulesOverlay').style.display = 'none';
   guidedGameCount = 0;
@@ -2027,6 +2309,7 @@ function afterGame() {
 }
 
 function setOrder(order) {
+  primeAudio();
   playerFirst = order === 'first';
   document.getElementById('btnFirst').classList.toggle('active', playerFirst);
   document.getElementById('btnSecond').classList.toggle('active', !playerFirst);
@@ -2710,7 +2993,10 @@ function renderBoard(winCells = [], newDisc = null) {
   renderDropRow();
 
   const winSet = new Set(winCells.map(cell => `${cell.r}-${cell.c}`));
-  const dropBase = 72;
+  const boardStyles = getComputedStyle(boardEl);
+  const cellSize = parseFloat(boardStyles.getPropertyValue('--cell')) || 64;
+  const rowGap = parseFloat(boardStyles.rowGap || boardStyles.gap) || 8;
+  const dropBase = cellSize + rowGap;
 
   for (let c = 0; c < COLS; c++) {
     const colEl = document.createElement('div');
@@ -2732,7 +3018,7 @@ function renderBoard(winCells = [], newDisc = null) {
         d.className = 'disc ' + (v === 'P' ? 'p' : 'a') + (isWin ? ' win-disc' : '');
         if (newDisc && newDisc.r === r && newDisc.c === c) {
           d.className += ' new';
-          d.style.setProperty('--drop-distance', `${(r + 1) * dropBase}px`);
+          d.style.setProperty('--drop-distance', `${(r + 1) * dropBase + 18}px`);
         }
         slot.appendChild(d);
       }
@@ -2748,6 +3034,7 @@ function placeDisc(col, sym) {
   if (row === -1) return null;
   board[row][col] = sym;
   lastMove = { r: row, c: col, sym };
+  playDropSound(sym);
   return { r: row, c: col };
 }
 
@@ -2775,6 +3062,7 @@ function newGame() {
 }
 
 function onColClick(col) {
+  primeAudio();
   if (over || turn !== 'player') return;
   if (getDropRow(col) === -1) return;
 
@@ -2909,12 +3197,15 @@ function endGame(result) {
     emoji = '🏆';
     title = '你赢了';
     setStatus('🏆', '你赢了！');
+    playWinSound();
   } else if (result.winner === 'ai') {
     emoji = '🤖';
     title = 'AI 赢了';
     setStatus('😵', '电脑赢了！');
+    playLoseSound();
   } else {
     setStatus('🤝', '平局！');
+    playDrawSound();
   }
   tpSetEnd(result.line, title);
   setTimeout(() => showDialog(emoji, title), 800);
